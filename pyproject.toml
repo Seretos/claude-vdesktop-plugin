@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vdesktop-plugin"
+version = "0.1.0"
+description = "Claude Code plugin: MCP server for Microsoft Virtual Desktops on Windows 11"
+requires-python = ">=3.11"
+authors = [{ name = "Arne von Appen" }]
+dependencies = [
+  "mcp>=1.2",
+  "pyvda>=0.4",
+  "pywin32>=306; sys_platform == 'win32'",
+  "comtypes>=1.4; sys_platform == 'win32'",
+  "uiautomation>=2.0; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.10",
+]
+
+[tool.setuptools]
+package-dir = { "" = "server" }
+
+[tool.setuptools.packages.find]
+where = ["server"]

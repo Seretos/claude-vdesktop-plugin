@@ -1,0 +1,15 @@
+{
+  "name": "vdesktop-plugin",
+  "description": "Microsoft Virtual Desktop management for Claude Code (native Windows + WSL). Create/delete/switch desktops, apply layouts (presets and custom percent splits, multi-monitor), launch Chrome/Terminal/VSCode into layout slots, pin apps across desktops.",
+  "version": "0.1.0",
+  "author": { "name": "Arne von Appen" },
+  "mcpServers": {
+    "vdesktop": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/vdesktop.exe",
+      "args": [],
+      "env": {
+        "VDESKTOP_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}"
+      }
+    }
+  }
+}
