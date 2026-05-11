@@ -1,0 +1,79 @@
+name: release
+
+# Trigger model:
+#   - Push a tag matching v*.*.*  -> build the .exe, package the release zip,
+#     create a GitHub Release (or update an existing one) and attach the zip.
+#   - workflow_dispatch -> manual build that uploads the zip as a workflow
+#     artifact (no release created). Useful for dry-runs before tagging.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed by softprops/action-gh-release to create/edit releases
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Sanity-check tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          $manifest = Get-Content .claude-plugin/plugin.json -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $tag) {
+            Write-Host "ERROR: tag $env:GITHUB_REF_NAME points to version '$tag' but plugin.json has '$($manifest.version)'."
+            Write-Host "Update plugin.json (and pyproject.toml) before tagging."
+            exit 1
+          }
+          Write-Host "Tag v$tag matches manifest."
+
+      - name: Build .exe and release zip
+        shell: pwsh
+        run: ./scripts/build.ps1 -Clean -Package
+
+      - name: Upload zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vdesktop-plugin-${{ github.ref_name }}
+          path: dist/vdesktop-plugin-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/vdesktop-plugin-*.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Install
+
+            1. Download `vdesktop-plugin-${{ github.ref_name }}.zip` below.
+            2. Unpack to a stable directory.
+            3. In Claude Code: `/plugin install <path-to-unpacked-folder>`
+               or `claude --plugin-dir <path>`.
+
+            No Python or dependencies required — the bundled `bin/vdesktop.exe`
+            is self-contained.
+
+            Works natively on Windows 11 and from inside WSL
+            (via `binfmt_misc` `.exe` interop). Windows 10 is not supported.

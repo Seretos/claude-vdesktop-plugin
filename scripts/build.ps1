@@ -31,23 +31,39 @@ function Fail($msg) {
     exit 1
 }
 
-# 1. Verify Python.
+# 1. Verify Python — prefer the py launcher (local Windows installs); fall
+# back to python on PATH (CI runners with actions/setup-python).
 Write-Step "Checking Python"
-$pythonOk = $false
-try {
-    $ver = & py -3 --version 2>&1
+$script:PyCmd = $null
+$script:PyArgs = @()
+if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+    $verRaw = & py.exe -3 --version 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "    $ver"
-        $pythonOk = $true
+        $script:PyCmd = "py.exe"
+        $script:PyArgs = @("-3")
+        Write-Host "    $verRaw (via py.exe)"
     }
-} catch { }
-if (-not $pythonOk) {
-    Fail "py.exe -3 not available. Install Python 3.11+ from https://www.python.org/downloads/ (be sure the 'py launcher' option is checked)."
+}
+if (-not $script:PyCmd) {
+    if (Get-Command python.exe -ErrorAction SilentlyContinue) {
+        $verRaw = & python.exe --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $script:PyCmd = "python.exe"
+            Write-Host "    $verRaw (via python.exe)"
+        }
+    }
+}
+if (-not $script:PyCmd) {
+    Fail "No usable Python found. Install Python 3.11+ from https://www.python.org/downloads/ (with the py launcher option)."
+}
+
+function Invoke-Py {
+    & $script:PyCmd @script:PyArgs @args
 }
 
 # 2. Ensure plugin + build deps are installed.
 Write-Step "Ensuring dependencies (plugin + pyinstaller)"
-& py -3 -m pip install --quiet --disable-pip-version-check -e ".[build]"
+Invoke-Py -m pip install --quiet --disable-pip-version-check -e ".[build]"
 if ($LASTEXITCODE -ne 0) {
     Fail "pip install failed."
 }
@@ -60,7 +76,7 @@ if ($Clean) {
 
 # 4. Run PyInstaller.
 Write-Step "Running PyInstaller"
-& py -3 -m PyInstaller vdesktop.spec --clean --noconfirm
+Invoke-Py -m PyInstaller vdesktop.spec --clean --noconfirm
 if ($LASTEXITCODE -ne 0) {
     Fail "PyInstaller build failed."
 }
@@ -73,9 +89,24 @@ $exeSize = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host "    dist/vdesktop.exe (${exeSize} MB)"
 
 # 5. Copy into bin/ where plugin.json expects it.
+# Retry the copy: on Windows, AV scanners (Defender) briefly lock freshly-
+# emitted .exe files. A small backoff is enough.
 Write-Step "Copying to bin/vdesktop.exe"
 New-Item -ItemType Directory -Force -Path "bin" | Out-Null
-Copy-Item -Force $exe "bin/vdesktop.exe"
+$copied = $false
+for ($i = 0; $i -lt 5; $i++) {
+    try {
+        Copy-Item -Force $exe "bin/vdesktop.exe" -ErrorAction Stop
+        $copied = $true
+        break
+    } catch [System.IO.IOException] {
+        Write-Host "    file locked (try $($i+1)/5), retrying..." -ForegroundColor Yellow
+        Start-Sleep -Milliseconds 800
+    }
+}
+if (-not $copied) {
+    Fail "Could not copy dist/vdesktop.exe to bin/ -- file remained locked."
+}
 
 # 6. Smoke-test: MCP initialize handshake.
 # PowerShell 5.1's Process StreamWriter prepends a UTF-8 BOM that MCP rejects.
