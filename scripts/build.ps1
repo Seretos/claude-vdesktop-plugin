@@ -31,12 +31,19 @@ function Fail($msg) {
     exit 1
 }
 
-# 1. Verify Python — prefer the py launcher (local Windows installs); fall
-# back to python on PATH (CI runners with actions/setup-python).
+# 1. Verify Python.
+# In CI ($env:CI = "true") prefer python.exe on PATH so we get the version
+# that actions/setup-python installed — py.exe consults the registry and can
+# pick a different Python (e.g. one from the toolcache) than setup-python
+# placed on PATH, which would silently change the bundled interpreter.
+# Locally, prefer py.exe -3 because that's what Windows users normally have.
 Write-Step "Checking Python"
 $script:PyCmd = $null
 $script:PyArgs = @()
-if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+
+$preferPython = ($env:CI -eq "true")
+
+if (-not $preferPython -and (Get-Command py.exe -ErrorAction SilentlyContinue)) {
     $verRaw = & py.exe -3 --version 2>&1
     if ($LASTEXITCODE -eq 0) {
         $script:PyCmd = "py.exe"
@@ -44,13 +51,21 @@ if (Get-Command py.exe -ErrorAction SilentlyContinue) {
         Write-Host "    $verRaw (via py.exe)"
     }
 }
-if (-not $script:PyCmd) {
-    if (Get-Command python.exe -ErrorAction SilentlyContinue) {
-        $verRaw = & python.exe --version 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $script:PyCmd = "python.exe"
-            Write-Host "    $verRaw (via python.exe)"
-        }
+if (-not $script:PyCmd -and (Get-Command python.exe -ErrorAction SilentlyContinue)) {
+    $verRaw = & python.exe --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $script:PyCmd = "python.exe"
+        $note = if ($preferPython) { "via python.exe, CI mode" } else { "via python.exe" }
+        Write-Host "    $verRaw ($note)"
+    }
+}
+if (-not $script:PyCmd -and $preferPython -and (Get-Command py.exe -ErrorAction SilentlyContinue)) {
+    # Final fallback inside CI: py.exe if python.exe wasn't found.
+    $verRaw = & py.exe -3 --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $script:PyCmd = "py.exe"
+        $script:PyArgs = @("-3")
+        Write-Host "    $verRaw (via py.exe, CI fallback)"
     }
 }
 if (-not $script:PyCmd) {
@@ -89,8 +104,9 @@ $exeSize = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host "    dist/vdesktop.exe (${exeSize} MB)"
 
 # 5. Copy into bin/ where plugin.json expects it.
-# Retry the copy: on Windows, AV scanners (Defender) briefly lock freshly-
-# emitted .exe files. A small backoff is enough.
+# Retries the copy because Defender briefly locks freshly-emitted .exe files.
+# If the lock turns out to be a running vdesktop.exe (i.e. the dev's own
+# Claude Code session has the plugin loaded), surface that clearly.
 Write-Step "Copying to bin/vdesktop.exe"
 New-Item -ItemType Directory -Force -Path "bin" | Out-Null
 $copied = $false
@@ -105,6 +121,14 @@ for ($i = 0; $i -lt 5; $i++) {
     }
 }
 if (-not $copied) {
+    $running = @(Get-Process -Name vdesktop -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        $pids = ($running | ForEach-Object { $_.Id }) -join ", "
+        Write-Host "    vdesktop.exe is still running (PID: $pids)." -ForegroundColor Yellow
+        Write-Host "    A Claude Code session likely has the plugin's MCP server loaded."
+        Write-Host "    Close it (or run '/mcp' and disconnect 'vdesktop') and re-run the build."
+        Write-Host "    To kill it now without that:   Stop-Process -Name vdesktop -Force"
+    }
     Fail "Could not copy dist/vdesktop.exe to bin/ -- file remained locked."
 }
 

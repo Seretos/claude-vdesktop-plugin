@@ -10,7 +10,13 @@ log = logging.getLogger("vdesktop.desktops")
 
 try:
     import pyvda  # type: ignore
-except ImportError as exc:  # pragma: no cover
+except Exception as exc:  # noqa: BLE001
+    # pyvda raises NotImplementedError at import time on older Windows builds
+    # (its _check_version guard) and OSError if COM cannot bind. Capture both
+    # so the module still loads -- individual desktop tools then fail with a
+    # clean RuntimeError via _require(), and the rest of the server (layouts,
+    # window-ops, launchers) keeps working. This is also what makes the build
+    # smoke-test pass on GitHub's Windows Server runners.
     pyvda = None  # type: ignore
     _pyvda_error: Optional[Exception] = exc
 else:
