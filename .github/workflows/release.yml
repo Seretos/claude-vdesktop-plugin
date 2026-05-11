@@ -30,18 +30,43 @@ jobs:
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
-      - name: Sanity-check tag matches manifest version
+      - name: Stamp tag version into plugin.json and pyproject.toml
+        # On tag pushes the version recorded in the released artifacts comes
+        # from the tag itself — repo files keep their dev placeholder so we
+        # don't need a pre-release commit. The edits live only in CI's
+        # checked-out copy; they are never pushed back.
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          $tag = "${env:GITHUB_REF_NAME}" -replace '^v',''
-          $manifest = Get-Content .claude-plugin/plugin.json -Raw | ConvertFrom-Json
-          if ($manifest.version -ne $tag) {
-            Write-Host "ERROR: tag $env:GITHUB_REF_NAME points to version '$tag' but plugin.json has '$($manifest.version)'."
-            Write-Host "Update plugin.json (and pyproject.toml) before tagging."
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            Write-Host "ERROR: could not derive version from ref '$env:GITHUB_REF_NAME'."
             exit 1
           }
-          Write-Host "Tag v$tag matches manifest."
+          Write-Host "Stamping version $version"
+
+          $manifestPath = ".claude-plugin/plugin.json"
+          $manifest = Get-Content $manifestPath -Raw
+          $manifest = [regex]::Replace(
+            $manifest,
+            '("version"\s*:\s*")[^"]*(")',
+            "`${1}$version`${2}"
+          )
+          Set-Content -Path $manifestPath -Value $manifest -NoNewline -Encoding UTF8
+
+          $pyprojectPath = "pyproject.toml"
+          $pyproject = Get-Content $pyprojectPath -Raw
+          # Only the [project] table's `version = "..."` line, anchored to
+          # the start of a line to avoid hitting dependency version pins.
+          $pyproject = [regex]::Replace(
+            $pyproject,
+            '(?m)^(version\s*=\s*")[^"]*(")',
+            "`${1}$version`${2}"
+          )
+          Set-Content -Path $pyprojectPath -Value $pyproject -NoNewline -Encoding UTF8
+
+          Write-Host "plugin.json: $((Get-Content $manifestPath -Raw | ConvertFrom-Json).version)"
+          Write-Host "pyproject.toml line: $((Select-String -Path $pyprojectPath -Pattern '(?m)^version\s*=').Line)"
 
       - name: Build .exe and release zip
         shell: pwsh

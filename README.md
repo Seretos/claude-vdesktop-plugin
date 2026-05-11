@@ -119,16 +119,29 @@ This requires `pip install -e .` to have run once.
 
 ## Release workflow (maintainers)
 
-The intended release path:
+```
+git tag v0.1.1
+git push --tags
+```
 
-1. Bump `version` in `.claude-plugin/plugin.json` and `pyproject.toml`.
-2. Run `pwsh -File scripts/build.ps1 -Clean -Package` locally to produce
-   `dist/vdesktop-plugin-<version>.zip` and smoke-test it.
-3. Tag the release and push: `git tag v<version> && git push --tags`.
-4. CI (when configured) re-builds on the tag and uploads the zip as a
-   GitHub Release asset. Until CI is set up, upload `dist/*.zip` manually.
+That's it. The `release` GitHub Actions workflow does the rest:
 
-Users install by downloading the zip — they don't touch the source repo.
+1. Stamps the tag's version (`0.1.1`) into `.claude-plugin/plugin.json`
+   and `pyproject.toml` in the CI checkout (no commit pushed back — the
+   repo files stay on their placeholder).
+2. Runs `scripts/build.ps1 -Clean -Package` to produce
+   `dist/vdesktop-plugin-0.1.1.zip` and verify it with an MCP handshake
+   smoke-test.
+3. Creates the GitHub Release for the tag (auto-generated notes) and
+   attaches the zip as the release asset. Pre-release tags
+   (`v0.2.0-rc1`, anything containing `-`) are marked as such automatically.
+
+For a dry-run before tagging, trigger the workflow manually
+(`Actions → release → Run workflow`); it builds the zip and uploads it
+as a workflow artifact but does not create a release.
+
+Users install by downloading the zip from the Releases page — they don't
+touch the source repo.
 
 ## Why a frozen binary?
 
